@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: rxiver
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      # --- AI ---------------------------------------------------------------
+      # Leave unset to run in MOCK MODE (demoable with no key). Set a real key
+      # in the Render dashboard to use the live Anthropic API.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+      # --- Optional semantic embeddings (ranking) ---------------------------
+      # Leave unset to use the built-in lexical BM25 ranker (zero deps).
+      - key: EMBEDDINGS_PROVIDER
+        sync: false
+      - key: EMBEDDINGS_API_KEY
+        sync: false
+      - key: EMBEDDINGS_MODEL
+        sync: false
+
+      # --- Corpus refresh ---------------------------------------------------
+      - key: REFRESH_CATEGORIES
+        value: "cs.LG,cs.AI,cs.CL"
+
+      # Render injects PORT automatically; the server honors process.env.PORT.
