@@ -75,6 +75,16 @@ export default function Discover({
   async function onPdf(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (file.size > 12 * 1024 * 1024) {
+      setError("PDFs must be 12 MB or smaller.");
+      e.target.value = "";
+      return;
+    }
+    if (file.type && file.type !== "application/pdf") {
+      setError("Choose a PDF file.");
+      e.target.value = "";
+      return;
+    }
     setLoading(true);
     setError("");
     setMeta("");

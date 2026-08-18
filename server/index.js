@@ -11,6 +11,8 @@ import { rankBySimilarity, embeddingsEnabled } from "./rank.js";
 import { personalize, profileTerms } from "./personalize.js";
 import { chat, MOCK_MODE, MODEL } from "./ai.js";
 import { runRefresh, readSnapshot } from "./refresh.js";
+import { categoriesInput, chatInput, sanitizeFolder, sanitizeProfile, searchInput } from "./validate.js";
+import { rateLimit, refreshAuthorized, securityHeaders } from "./security.js";
 
 dotenv.config();
 
@@ -19,8 +21,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLIENT_DIST = path.resolve(__dirname, "../client/dist");
 
 const app = express();
-app.use(cors());
-app.use(express.json({ limit: "4mb" }));
+const publicError = (err, fallback) =>
+  process.env.NODE_ENV === "production" ? fallback : err?.message || fallback;
+app.disable("x-powered-by");
+if (process.env.TRUST_PROXY === "1") app.set("trust proxy", 1);
+app.use(securityHeaders);
+if (process.env.CORS_ORIGIN) {
+  app.use(cors({ origin: process.env.CORS_ORIGIN.split(",").map((origin) => origin.trim()) }));
+}
+app.use(express.json({ limit: "1mb", strict: true }));
+app.use("/api", rateLimit({ max: 120 }));
 app.use(express.static(CLIENT_DIST));
 
 const upload = multer({
@@ -38,6 +48,8 @@ app.get("/api/health", (_req, res) => {
     model: MODEL,
     embeddingsEnabled,
     ranking: embeddingsEnabled ? "embeddings" : "lexical",
+    interactiveRefresh:
+      process.env.NODE_ENV !== "production" && !process.env.REFRESH_TOKEN,
   });
 });
 
@@ -46,13 +58,13 @@ app.get("/api/health", (_req, res) => {
 // Body: { query, category, maxResults, sortBy, profile }
 // ---------------------------------------------------------------------------
 app.post("/api/search", async (req, res) => {
-  const {
-    query = "",
-    category = "",
-    maxResults = 20,
-    sortBy = "relevance",
-    profile = null,
-  } = req.body || {};
+  let input;
+  try {
+    input = searchInput(req.body);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+  const { query, category, maxResults, sortBy, profile } = input;
 
   if (!query.trim() && !category.trim()) {
     return res
@@ -82,7 +94,7 @@ app.post("/api/search", async (req, res) => {
     });
   } catch (err) {
     console.error("search error:", err.message);
-    res.status(502).json({ error: `arXiv search failed: ${err.message}` });
+    res.status(502).json({ error: publicError(err, "arXiv search is temporarily unavailable.") });
   }
 });
 
@@ -92,11 +104,14 @@ app.post("/api/search", async (req, res) => {
 // ---------------------------------------------------------------------------
 app.post("/api/similar-from-pdf", upload.single("file"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No PDF uploaded." });
+  if (!req.file.buffer.subarray(0, 5).equals(Buffer.from("%PDF-"))) {
+    return res.status(415).json({ error: "The uploaded file is not a valid PDF." });
+  }
 
   let profile = null;
   if (req.body && req.body.profile) {
     try {
-      profile = JSON.parse(req.body.profile);
+      profile = sanitizeProfile(JSON.parse(req.body.profile));
     } catch {
       profile = null;
     }
@@ -132,7 +147,7 @@ app.post("/api/similar-from-pdf", upload.single("file"), async (req, res) => {
     });
   } catch (err) {
     console.error("pdf similar error:", err.message);
-    res.status(400).json({ error: err.message || "Failed to process the PDF." });
+    res.status(400).json({ error: publicError(err, "Failed to process the PDF.") });
   }
 });
 
@@ -141,8 +156,7 @@ app.post("/api/similar-from-pdf", upload.single("file"), async (req, res) => {
 // Body: { threadName, bookmarks, folder, messages }
 // ---------------------------------------------------------------------------
 app.post("/api/chat", async (req, res) => {
-  const { threadName = "", bookmarks = [], folder = null, messages = [] } =
-    req.body || {};
+  const { threadName, bookmarks, folder, messages } = chatInput(req.body);
   if (!Array.isArray(messages) || messages.length === 0) {
     return res.status(400).json({ error: "No messages provided." });
   }
@@ -154,21 +168,51 @@ app.post("/api/chat", async (req, res) => {
     res.json({ mockMode, reply });
   } catch (err) {
     console.error("chat error:", err.message);
-    res.status(500).json({ error: err.message || "Chat failed." });
+    res.status(500).json({ error: publicError(err, "Chat failed.") });
+  }
+});
+
+// Collection-level literature synthesis, sharing the same grounded AI path as
+// chat so saved papers and imported reading excerpts stay the source of truth.
+app.post("/api/analyze-folder", async (req, res) => {
+  const folder = sanitizeFolder(req.body?.folder);
+  if (!folder || !Array.isArray(folder.papers) || folder.papers.length === 0) {
+    return res.status(400).json({ error: "Choose a folder with at least one paper." });
+  }
+  try {
+    const result = await chat(
+      { threadName: `Collection analysis: ${folder.name || "Untitled"}`, bookmarks: [], folder },
+      [{
+        role: "user",
+        content: "Synthesize this collection. Identify common themes, compare methods, surface disagreements or gaps, and propose the three strongest next research questions. Stay grounded in the saved papers and excerpts.",
+      }]
+    );
+    res.json({ mockMode: result.mockMode, reply: result.reply });
+  } catch (err) {
+    console.error("folder analysis error:", err.message);
+    res.status(500).json({ error: publicError(err, "Collection analysis failed.") });
   }
 });
 
 // ---------------------------------------------------------------------------
 // REFRESH: routine corpus refresh (also runnable via `npm run refresh`).
 // ---------------------------------------------------------------------------
-app.post("/api/refresh", async (req, res) => {
-  const { categories = null } = req.body || {};
+app.post("/api/refresh", rateLimit({ windowMs: 60_000, max: 5 }), async (req, res) => {
+  if (!refreshAuthorized(req)) {
+    return res.status(403).json({ error: "Corpus refresh is not authorized." });
+  }
+  let categories;
+  try {
+    categories = categoriesInput(req.body?.categories);
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
   try {
     const result = await runRefresh(categories);
     res.json(result);
   } catch (err) {
     console.error("refresh error:", err.message);
-    res.status(500).json({ error: err.message || "Refresh failed." });
+    res.status(500).json({ error: publicError(err, "Refresh failed.") });
   }
 });
 
@@ -187,7 +231,14 @@ app.use((err, _req, res, next) => {
   if (err instanceof multer.MulterError) {
     return res.status(400).json({ error: `Upload failed: ${err.message}` });
   }
+  if (err instanceof SyntaxError && err.status === 400) {
+    return res.status(400).json({ error: "Malformed JSON request." });
+  }
   next(err);
+});
+
+app.use("/api", (_req, res) => {
+  res.status(404).json({ error: "API route not found." });
 });
 
 // SPA catch-all.
@@ -198,10 +249,26 @@ app.get("*", (req, res, next) => {
   });
 });
 
-app.listen(PORT, () => {
-  const aiMode = MOCK_MODE ? "MOCK MODE — no API key" : `LIVE — ${MODEL}`;
-  const rank = embeddingsEnabled ? "embeddings" : "lexical (BM25)";
-  console.log(
-    `rxiver server on http://localhost:${PORT}  [AI: ${aiMode}]  [ranking: ${rank}]`
-  );
+app.use((err, _req, res, _next) => {
+  console.error("unhandled request error:", err);
+  res.status(500).json({ error: "Unexpected server error." });
 });
+
+export function startServer(port = PORT) {
+  const server = app.listen(port, () => {
+    const aiMode = MOCK_MODE ? "MOCK MODE — no API key" : `LIVE — ${MODEL}`;
+    const rank = embeddingsEnabled ? "embeddings" : "lexical (BM25)";
+    const address = server.address();
+    const activePort = typeof address === "object" && address ? address.port : port;
+    console.log(
+      `rxiver server on http://localhost:${activePort}  [AI: ${aiMode}]  [ranking: ${rank}]`
+    );
+  });
+  return server;
+}
+
+export { app };
+
+if (path.resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
+  startServer();
+}

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import type { Folder } from "../types";
+import type { Folder, GlossExcerptExport } from "../types";
+import { citationFilename, formatApa, formatFolderBibTeX } from "../lib/cite";
 
 interface Props {
   folders: Folder[];
@@ -12,6 +13,7 @@ interface Props {
   ) => void;
   onRemoveExcerpt: (folderId: string, excerptId: string) => void;
   onRemovePaper: (folderId: string, savedId: string) => void;
+  onAnalyzeFolder: (folder: Folder) => Promise<string>;
 }
 
 export default function Organize({
@@ -22,6 +24,7 @@ export default function Organize({
   onAddExcerpt,
   onRemoveExcerpt,
   onRemovePaper,
+  onAnalyzeFolder,
 }: Props) {
   const [newName, setNewName] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(
@@ -35,6 +38,42 @@ export default function Organize({
   const [exText, setExText] = useState("");
   const [exNote, setExNote] = useState("");
   const [exSource, setExSource] = useState("");
+  const [analysis, setAnalysis] = useState("");
+  const [analyzing, setAnalyzing] = useState(false);
+  const [notice, setNotice] = useState("");
+
+  function download(name: string, contents: string, type: string) {
+    const url = URL.createObjectURL(new Blob([contents], { type }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = name;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  }
+
+  async function importGloss(file: File) {
+    if (!selected) return;
+    try {
+      if (file.size > 5 * 1024 * 1024) throw new Error("Gloss export is larger than 5 MB.");
+      const value = JSON.parse(await file.text()) as GlossExcerptExport;
+      if (value.version !== 1 || value.source !== "rxiver-gloss" || !Array.isArray(value.excerpts)) {
+        throw new Error("Not a rxiver gloss export");
+      }
+      const excerpts = value.excerpts.slice(0, 5_000).filter(
+        (excerpt) => excerpt && typeof excerpt.text === "string" && excerpt.text.trim()
+      );
+      for (const excerpt of excerpts) {
+        onAddExcerpt(selected.id, {
+          text: excerpt.text.slice(0, 20_000),
+          note: typeof excerpt.note === "string" ? excerpt.note.slice(0, 8_000) : "",
+          source: typeof excerpt.source === "string" ? excerpt.source.slice(0, 2_000) : "",
+        });
+      }
+      setNotice(`Imported ${excerpts.length} Gloss excerpt${excerpts.length === 1 ? "" : "s"}.`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Import failed");
+    }
+  }
 
   function addFolder() {
     if (!newName.trim()) return;
@@ -55,9 +94,9 @@ export default function Organize({
   }
 
   return (
-    <div className="mx-auto flex max-w-5xl gap-4 p-4">
+    <div className="mx-auto flex max-w-5xl flex-col gap-4 p-4 md:flex-row">
       {/* Folder list */}
-      <div className="w-64 shrink-0">
+      <div className="w-full shrink-0 md:w-64">
         <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
           <div className="flex gap-2">
             <input
@@ -127,6 +166,60 @@ export default function Organize({
                 Delete folder
               </button>
             </div>
+
+            <div className="flex flex-wrap gap-2 rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+              <button
+                disabled={selected.papers.length === 0}
+                onClick={() => void navigator.clipboard.writeText(selected.papers.map(formatApa).join("\n\n"))}
+                className="rounded border border-slate-300 px-3 py-1.5 text-xs font-medium hover:bg-slate-50 disabled:opacity-40"
+              >
+                Copy APA citations
+              </button>
+              <button
+                disabled={selected.papers.length === 0}
+                onClick={() => download(citationFilename(selected.name), formatFolderBibTeX(selected.papers), "application/x-bibtex")}
+                className="rounded border border-slate-300 px-3 py-1.5 text-xs font-medium hover:bg-slate-50 disabled:opacity-40"
+              >
+                Download BibTeX
+              </button>
+              <label className="cursor-pointer rounded border border-slate-300 px-3 py-1.5 text-xs font-medium hover:bg-slate-50">
+                Import from rxiver gloss
+                <input
+                  type="file"
+                  accept=".json,application/json"
+                  className="hidden"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) void importGloss(file);
+                    event.target.value = "";
+                  }}
+                />
+              </label>
+              <button
+                disabled={analyzing || selected.papers.length === 0}
+                onClick={async () => {
+                  setAnalyzing(true);
+                  try { setAnalysis(await onAnalyzeFolder(selected)); }
+                  catch (error) { setAnalysis(error instanceof Error ? error.message : "Analysis failed"); }
+                  finally { setAnalyzing(false); }
+                }}
+                className="ml-auto rounded bg-indigo-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+              >
+                {analyzing ? "Analyzing…" : "Analyze collection"}
+              </button>
+            </div>
+
+            {analysis && (
+              <div className="whitespace-pre-wrap rounded-lg border border-indigo-200 bg-indigo-50 p-4 text-sm leading-relaxed text-slate-700">
+                <div className="mb-2 font-semibold text-indigo-800">Collection synthesis</div>
+                {analysis}
+              </div>
+            )}
+            {notice && (
+              <div className="rounded-md border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-700" role="status">
+                {notice}
+              </div>
+            )}
 
             {/* Add excerpt */}
             <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">

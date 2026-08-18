@@ -1,9 +1,10 @@
 # rxiver — an AI research workspace
 
-rxiver is a research buddy that (a) **recommends arXiv papers** by topic/keyword
-or from an uploaded PDF, and (b) lets you **organize** findings into folders of
-papers and excerpts and **think about them** in named chat windows that bookmark
-papers, ideas, and tabs.
+rxiver is the canonical research workspace in this repository, combining the
+best parts of the former standalone rxiver, Paperclip, and Gloss concepts. It
+recommends arXiv papers, organizes research, exports citations, synthesizes
+collections, and accepts captured reading notes from the rxiver gloss browser
+companion.
 
 Recommendations are **biased toward what you've saved**, and the arXiv corpus is
 refreshed on a routine you control. That is the honest version of "retrains on
@@ -14,10 +15,20 @@ literal model training.
   "upload a PDF → find similar papers". Results are re-ranked for relevance and
   biased toward your saved folders, with a short "why recommended" reason.
 - **Organize** — folders/collections. Save whole papers or paste **excerpts** with
-  a note and a source link/citation.
+  a note and a source link/citation. Copy APA citations or download a collection
+  as BibTeX.
+- **Analyze collections** — synthesize the papers and excerpts in a folder using
+  titles, authors, categories, and abstracts as grounding. Live AI is enabled by
+  `ANTHROPIC_API_KEY`; the zero-key mock path remains usable.
+- **Capture while reading** — import the JSON produced by the sibling
+  `gloss/` extension's “Export to rxiver” action. Highlights become excerpts,
+  explanations become notes, and source pages remain attached.
 - **Chat windows** — named threads that bookmark papers/ideas/tabs and hold an AI
   research-assistant conversation grounded in those bookmarks + an optional linked
   folder.
+- **Portable workspaces** — download a versioned JSON backup containing every
+  folder, paper, excerpt, bookmark, and chat, then restore it in another browser.
+  Restore validates and normalizes the entire file before replacing local data.
 
 ## Run it (zero setup)
 
@@ -105,8 +116,12 @@ The snapshot is written to `server/.cache/refresh.json`.
   of hour 7, then `launchctl load` it.
 
 - **Render (deployed):** add a **Cron Job** service pointing at this repo with the
-  command `npm run refresh` and a daily schedule (`0 7 * * *`), or curl the
-  `POST /api/refresh` endpoint of the web service from any scheduler.
+  command `npm run refresh` and a daily schedule (`0 7 * * *`), or call the
+  `POST /api/refresh` endpoint with `Authorization: Bearer $REFRESH_TOKEN`.
+
+In production, HTTP refresh is refused unless `REFRESH_TOKEN` is configured.
+The browser refresh control is intentionally shown only in local development;
+scheduled server refreshes keep administrative credentials out of the client.
 
 ## Deploy
 
@@ -123,6 +138,20 @@ npm start          # NODE_ENV=production, Express serves client/dist + /api on $
 - **Render:** `render.yaml` defines a Node web service (`npm install && npm run
   build`, start `npm start`) with `ANTHROPIC_API_KEY` as a `sync: false` secret
   and the optional embeddings/refresh vars.
+
+### Production hardening
+
+- Same-origin API by default; cross-origin access is enabled only with an
+  explicit `CORS_ORIGIN` allowlist.
+- CSP, clickjacking, MIME-sniffing, referrer, and browser-permission headers are
+  applied to every response; Express fingerprinting is disabled.
+- API traffic is rate-limited in memory, request bodies and AI context are
+  bounded, and refresh jobs have a stricter limit plus bearer-token protection.
+- PDF uploads are capped at 12 MB and checked for a real PDF signature. arXiv,
+  embeddings, and AI calls have timeouts and semantic ranking falls back to BM25.
+- For horizontally scaled deployments, replace the in-memory rate limiter with
+  a shared Redis-backed limiter. Set `TRUST_PROXY=1` only behind a trusted single
+  reverse proxy.
 
 ## Persistence & the Supabase upgrade path
 
@@ -143,12 +172,17 @@ instance — **no UI changes required**:
 
 This mirrors the pattern used by the sibling apps in this repo family.
 
+Local-first data is private to one browser profile and is not an account system.
+Use **Back up** regularly until the Supabase adapter is deployed. Public,
+multi-device accounts still require hosted authentication, Postgres/RLS, storage,
+and the asynchronous repository adapter described above.
+
 ## Project layout
 
 ```
 rxiver/
   server/            Express (ESM) API
-    index.js         routes: /api/search, /api/similar-from-pdf, /api/chat, /api/refresh, /api/health
+    index.js         routes: /api/search, /api/similar-from-pdf, /api/chat, /api/analyze-folder, /api/refresh, /api/health
     arxiv.js         arXiv Atom fetch + parse + polite cache/rate-limit
     parse.js         PDF text extraction (unpdf) + query derivation
     rank.js          BM25 lexical ranker + optional semantic embeddings
@@ -158,6 +192,7 @@ rxiver/
   client/            Vite + React + TypeScript (strict) + Tailwind
     src/lib/repository.ts   localStorage-first data-access abstraction
     src/lib/api.ts          typed fetch wrappers for /api
+    src/lib/cite.ts         APA and BibTeX citation formatting
     src/components/         Discover, Organize, Chat, PaperCard
   Dockerfile, .dockerignore, render.yaml, .env.example
 ```

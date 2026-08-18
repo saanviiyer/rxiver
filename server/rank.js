@@ -102,11 +102,16 @@ async function embed(texts) {
       Authorization: `Bearer ${EMBEDDINGS_API_KEY}`,
     },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(Number(process.env.UPSTREAM_TIMEOUT_MS) || 15_000),
   });
   if (!res.ok) throw new Error(`embeddings provider responded ${res.status}`);
   const json = await res.json();
   const data = json.data || json.embeddings || [];
-  return data.map((d) => d.embedding || d);
+  const vectors = data.map((d) => d.embedding || d);
+  if (vectors.length !== texts.length || vectors.some((vector) => !Array.isArray(vector))) {
+    throw new Error("embeddings provider returned an invalid vector count");
+  }
+  return vectors;
 }
 
 async function embeddingRank(query, candidates) {

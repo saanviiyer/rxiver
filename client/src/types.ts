@@ -28,7 +28,23 @@ export interface SavedPaper {
   categories: string[];
   absUrl: string;
   pdfUrl: string;
+  published?: string;
   savedAt: string;
+}
+
+export interface GlossExcerptExport {
+  version: 1;
+  source: "rxiver-gloss";
+  exportedAt: string;
+  excerpts: { text: string; note: string; source: string }[];
+}
+
+export interface WorkspaceExport {
+  version: 1;
+  source: "rxiver-workspace";
+  exportedAt: string;
+  folders: Folder[];
+  threads: ChatThread[];
 }
 
 export interface Excerpt {

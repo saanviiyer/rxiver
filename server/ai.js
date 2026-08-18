@@ -6,9 +6,13 @@ import Anthropic from "@anthropic-ai/sdk";
 
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 export const MOCK_MODE = !API_KEY;
-export const MODEL = "claude-sonnet-5";
+export const MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
 
-const client = MOCK_MODE ? null : new Anthropic({ apiKey: API_KEY });
+const client = MOCK_MODE ? null : new Anthropic({
+  apiKey: API_KEY,
+  timeout: Number(process.env.UPSTREAM_TIMEOUT_MS) || 30_000,
+  maxRetries: 2,
+});
 
 const SYSTEM_PROMPT = `You are rxiver's research assistant, embedded in a single "chat window" that
 belongs to a researcher. A chat window bookmarks papers, ideas, and web tabs, and may be
@@ -51,7 +55,11 @@ export function buildContext({ threadName, bookmarks = [], folder = null }) {
     lines.push(`\nLinked folder: "${folder.name}"`);
     for (const p of (folder.papers || []).slice(0, 12)) {
       lines.push(
-        `  - [saved paper] ${p.title}${p.arxivId ? ` (arXiv:${p.arxivId})` : ""}`
+        `  - [saved paper] ${p.title}${p.arxivId ? ` (arXiv:${p.arxivId})` : ""}${
+          p.authors?.length ? ` by ${p.authors.slice(0, 4).join(", ")}` : ""
+        }${p.categories?.length ? ` [${p.categories.join(", ")}]` : ""}${
+          p.abstract ? ` — ${p.abstract.slice(0, 600)}` : ""
+        }`
       );
     }
     for (const e of (folder.excerpts || []).slice(0, 12)) {
@@ -73,6 +81,7 @@ function mockReply({ threadName, bookmarks = [], folder = null }, messages) {
   const paperBms = bookmarks.filter((b) => b.kind === "paper");
   const ideas = bookmarks.filter((b) => b.kind === "idea");
   const tabs = bookmarks.filter((b) => b.kind === "tab");
+  const savedPapers = folder?.papers || [];
 
   const parts = [];
   parts.push(
@@ -88,6 +97,12 @@ function mockReply({ threadName, bookmarks = [], folder = null }, messages) {
         .map((b) => `"${b.title}"`)
         .join(", ")}${paperBms.length > 3 ? ", and more" : ""}. A useful next step is to line up their methods and datasets side by side and look for where their assumptions disagree — that gap is usually where a new contribution lives.`
     );
+    if (/synthesi[sz]e this collection/i.test(q) && savedPapers.length) {
+      const anchor = savedPapers[0].title;
+      parts.push(
+        `\nThree grounded next questions:\n1. Which assumptions in "${anchor}" fail outside its reported setting?\n2. Which shared baseline would make the collection's methods directly comparable?\n3. What experiment would most clearly resolve the gap between the saved claims and excerpts?`
+      );
+    }
   }
   if (ideas.length) {
     parts.push(
@@ -98,18 +113,26 @@ function mockReply({ threadName, bookmarks = [], folder = null }, messages) {
     );
   }
   if (folder) {
+    const categories = [...new Set(savedPapers.flatMap((paper) => paper.categories || []))];
     parts.push(
       `\nSince this thread is linked to your "${folder.name}" folder (${
-        (folder.papers || []).length
+        savedPapers.length
       } papers, ${
         (folder.excerpts || []).length
-      } excerpts), I'd revisit those excerpts for a claim you can build the thread's argument around.`
+      } excerpts), the collection is anchored by ${savedPapers
+        .slice(0, 3)
+        .map((paper) => `"${paper.title}"`)
+        .join(", ") || "its saved excerpts"}${savedPapers.length > 3 ? ", and more" : ""}. ${
+        categories.length
+          ? `The strongest explicit subject overlap is ${categories.slice(0, 5).join(", ")}. `
+          : ""
+      }Compare the assumptions and evaluation methods in those papers, then use the saved excerpts to distinguish supported claims from open gaps.`
     );
   }
   if (tabs.length) {
     parts.push(`\nYour bookmarked tab${tabs.length > 1 ? "s" : ""} may add context worth pulling in.`);
   }
-  if (q) {
+  if (q && !paperBms.length && !(folder?.papers || []).length && !ideas.length) {
     parts.push(
       `\nOn your question — "${q.slice(0, 160)}" — I can only answer from the bookmarked context above; add the relevant papers to this window and I'll ground the answer in them.`
     );

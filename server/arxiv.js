@@ -5,7 +5,8 @@
 //
 // Docs: https://info.arxiv.org/help/api/user-manual.html
 
-const ARXIV_ENDPOINT = "http://export.arxiv.org/api/query";
+const ARXIV_ENDPOINT = "https://export.arxiv.org/api/query";
+const UPSTREAM_TIMEOUT_MS = Number(process.env.UPSTREAM_TIMEOUT_MS) || 15_000;
 
 // Be polite: cache identical queries briefly and never hit arXiv more than
 // once every MIN_INTERVAL_MS. arXiv asks callers to keep to ~1 request / 3s.
@@ -179,6 +180,7 @@ async function fetchArxiv(params) {
   const url = `${ARXIV_ENDPOINT}?${params.toString()}`;
   const res = await fetch(url, {
     headers: { "User-Agent": "rxiver/1.0 (research workspace; polite client)" },
+    signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
   });
   if (!res.ok) {
     throw new Error(`arXiv responded ${res.status}`);

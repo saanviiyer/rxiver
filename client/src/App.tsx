@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Bookmark, ChatThread, Folder, Paper } from "./types";
 import { repo } from "./lib/repository";
-import { getHealth, getRefreshStatus, runRefresh, type Health } from "./lib/api";
+import { analyzeFolder, getHealth, getRefreshStatus, runRefresh, type Health } from "./lib/api";
 import Discover from "./components/Discover";
 import Organize from "./components/Organize";
 import Chat from "./components/Chat";
@@ -15,6 +15,8 @@ export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [refreshInfo, setRefreshInfo] = useState<string>("");
   const [refreshing, setRefreshing] = useState(false);
+  const [workspaceNotice, setWorkspaceNotice] = useState("");
+  const restoreRef = useRef<HTMLInputElement>(null);
 
   // Re-read from the repository after any mutation.
   const syncFolders = () => setFolders(repo.listFolders());
@@ -51,6 +53,28 @@ export default function App() {
     }
   }
 
+  function exportWorkspace() {
+    const payload = JSON.stringify(repo.exportWorkspace(), null, 2);
+    const url = URL.createObjectURL(new Blob([payload], { type: "application/json" }));
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `rxiver-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    setWorkspaceNotice("Workspace backup downloaded.");
+  }
+
+  async function restoreWorkspace(file: File) {
+    try {
+      const result = repo.importWorkspace(JSON.parse(await file.text()));
+      syncFolders();
+      syncThreads();
+      setWorkspaceNotice(`Restored ${result.folders} folders and ${result.threads} chat windows.`);
+    } catch (error) {
+      setWorkspaceNotice(error instanceof Error ? error.message : "Restore failed.");
+    }
+  }
+
   // ---- Folder actions ----
   const saveToFolder = (folderId: string, paper: Paper) => {
     repo.savePaper(folderId, {
@@ -61,6 +85,7 @@ export default function App() {
       categories: paper.categories,
       absUrl: paper.absUrl,
       pdfUrl: paper.pdfUrl,
+      published: paper.published,
     });
     syncFolders();
   };
@@ -93,7 +118,7 @@ export default function App() {
   return (
     <div className="flex min-h-full flex-col">
       <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
+        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-3 px-4 py-3">
           <div className="flex items-baseline gap-2">
             <span className="text-xl font-bold text-indigo-600">rxiver</span>
             <span className="hidden text-xs text-slate-400 sm:inline">
@@ -101,7 +126,7 @@ export default function App() {
             </span>
           </div>
 
-          <nav className="flex gap-1">
+          <nav className="order-3 flex w-full gap-1 overflow-x-auto sm:order-none sm:w-auto">
             {tabs.map((t) => (
               <button
                 key={t.id}
@@ -117,7 +142,7 @@ export default function App() {
             ))}
           </nav>
 
-          <div className="ml-auto flex items-center gap-3 text-xs">
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2 text-xs">
             {health && (
               <span
                 className={`rounded-full px-2 py-0.5 ${
@@ -130,19 +155,53 @@ export default function App() {
                 {health.mockMode ? "Mock AI" : `Live · ${health.model}`}
               </span>
             )}
+            {health?.interactiveRefresh && (
+              <button
+                onClick={doRefresh}
+                disabled={refreshing}
+                title={refreshInfo}
+                className="rounded border border-slate-300 px-2 py-1 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {refreshing ? "Refreshing…" : "Refresh corpus"}
+              </button>
+            )}
             <button
-              onClick={doRefresh}
-              disabled={refreshing}
-              title={refreshInfo}
-              className="rounded border border-slate-300 px-2 py-1 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+              onClick={exportWorkspace}
+              title="Download all folders, excerpts, papers, bookmarks, and chats"
+              className="rounded border border-slate-300 px-2 py-1 text-slate-600 hover:bg-slate-50"
             >
-              {refreshing ? "Refreshing…" : "Refresh corpus"}
+              Back up
             </button>
+            <button
+              onClick={() => restoreRef.current?.click()}
+              title="Replace this browser's workspace from a validated rxiver backup"
+              className="rounded border border-slate-300 px-2 py-1 text-slate-600 hover:bg-slate-50"
+            >
+              Restore
+            </button>
+            <input
+              ref={restoreRef}
+              type="file"
+              accept=".json,application/json"
+              className="hidden"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file && confirm("Replace this browser's rxiver workspace with the selected backup?")) {
+                  void restoreWorkspace(file);
+                }
+                event.target.value = "";
+              }}
+            />
           </div>
         </div>
         {refreshInfo && (
           <div className="mx-auto max-w-6xl px-4 pb-2 text-[11px] text-slate-400">
             {refreshInfo}
+          </div>
+        )}
+        {workspaceNotice && (
+          <div className="mx-auto max-w-6xl px-4 pb-2 text-[11px] text-indigo-600" role="status">
+            {workspaceNotice}
           </div>
         )}
       </header>
@@ -184,6 +243,7 @@ export default function App() {
               repo.removePaper(folderId, savedId);
               syncFolders();
             }}
+            onAnalyzeFolder={async (folder) => (await analyzeFolder(folder)).reply}
           />
         )}
         {tab === "chat" && (

@@ -11,6 +11,8 @@ services:
       # in the Render dashboard to use the live Anthropic API.
       - key: ANTHROPIC_API_KEY
         sync: false
+      - key: ANTHROPIC_MODEL
+        sync: false
 
       # --- Optional semantic embeddings (ranking) ---------------------------
       # Leave unset to use the built-in lexical BM25 ranker (zero deps).
@@ -24,5 +26,9 @@ services:
       # --- Corpus refresh ---------------------------------------------------
       - key: REFRESH_CATEGORIES
         value: "cs.LG,cs.AI,cs.CL"
+      - key: REFRESH_TOKEN
+        generateValue: true
+      - key: TRUST_PROXY
+        value: "1"
 
       # Render injects PORT automatically; the server honors process.env.PORT.

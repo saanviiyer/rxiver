@@ -3,15 +3,29 @@
 
 import type { Bookmark, ChatMessage, Folder, Paper, Profile } from "../types";
 
+async function jsonRequest<T>(url: string, init?: RequestInit, timeoutMs = 30_000): Promise<T> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if ((error as Error).name === "AbortError") throw new Error("The request timed out. Please try again.");
+    throw new Error("Could not reach the rxiver server. Check your connection and try again.");
+  } finally {
+    window.clearTimeout(timer);
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || `Request failed (${res.status})`);
+  return data as T;
+}
+
 async function jsonPost<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, {
+  return jsonRequest<T>(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error || `Request failed (${res.status})`);
-  return data as T;
 }
 
 export interface Health {
@@ -20,10 +34,11 @@ export interface Health {
   model: string;
   embeddingsEnabled: boolean;
   ranking: string;
+  interactiveRefresh: boolean;
 }
 
 export function getHealth(): Promise<Health> {
-  return fetch("/api/health").then((r) => r.json());
+  return jsonRequest<Health>("/api/health", undefined, 10_000);
 }
 
 export interface SearchResult {
@@ -62,10 +77,11 @@ export async function similarFromPdf(
   const form = new FormData();
   form.append("file", file);
   if (profile) form.append("profile", JSON.stringify(profile));
-  const res = await fetch("/api/similar-from-pdf", { method: "POST", body: form });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error((data as { error?: string }).error || "Upload failed");
-  return data as PdfSimilarResult;
+  return jsonRequest<PdfSimilarResult>(
+    "/api/similar-from-pdf",
+    { method: "POST", body: form },
+    60_000
+  );
 }
 
 export interface ChatResult {
@@ -76,7 +92,13 @@ export interface ChatResult {
 // Compact folder shape passed to the chat endpoint as grounding context.
 export interface ChatFolderContext {
   name: string;
-  papers: { title: string; arxivId: string }[];
+  papers: {
+    title: string;
+    arxivId: string;
+    authors: string[];
+    abstract: string;
+    categories: string[];
+  }[];
   excerpts: { text: string; note: string; source: string }[];
 }
 
@@ -87,6 +109,12 @@ export function chat(params: {
   messages: Pick<ChatMessage, "role" | "content">[];
 }): Promise<ChatResult> {
   return jsonPost<ChatResult>("/api/chat", params);
+}
+
+export function analyzeFolder(folder: Folder): Promise<ChatResult> {
+  return jsonPost<ChatResult>("/api/analyze-folder", {
+    folder: folderToContext(folder),
+  });
 }
 
 export interface RefreshResult {
@@ -102,7 +130,7 @@ export function runRefresh(categories?: string[]): Promise<RefreshResult> {
 }
 
 export function getRefreshStatus(): Promise<RefreshResult> {
-  return fetch("/api/refresh").then((r) => r.json());
+  return jsonRequest<RefreshResult>("/api/refresh", undefined, 10_000);
 }
 
 // Helper to convert a Folder to the compact chat grounding shape.
@@ -110,7 +138,13 @@ export function folderToContext(folder: Folder | undefined): ChatFolderContext |
   if (!folder) return null;
   return {
     name: folder.name,
-    papers: folder.papers.map((p) => ({ title: p.title, arxivId: p.arxivId })),
+    papers: folder.papers.map((p) => ({
+      title: p.title,
+      arxivId: p.arxivId,
+      authors: p.authors,
+      abstract: p.abstract,
+      categories: p.categories,
+    })),
     excerpts: folder.excerpts.map((e) => ({
       text: e.text,
       note: e.note,

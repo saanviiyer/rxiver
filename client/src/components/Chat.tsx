@@ -87,9 +87,9 @@ export default function Chat({
   }
 
   return (
-    <div className="mx-auto flex max-w-6xl gap-4 p-4">
+    <div className="mx-auto flex max-w-6xl flex-col gap-4 p-4 md:flex-row">
       {/* Thread list */}
-      <div className="w-56 shrink-0">
+      <div className="w-full shrink-0 md:w-56">
         <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
           <div className="flex gap-2">
             <input
