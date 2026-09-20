@@ -1,4 +1,4 @@
-# rxiver — an AI research workspace
+# rxiver: an AI research workspace
 
 rxiver is the canonical research workspace in this repository, combining the
 best parts of the former standalone rxiver, Paperclip, and Gloss concepts. It
@@ -11,22 +11,22 @@ refreshed on a routine you control. That is the honest version of "retrains on
 arXiv": a **continuously-updated corpus snapshot + personalization**, **not**
 literal model training.
 
-- **Discover** — real arXiv search (public API, Atom XML parsed server-side), plus
+- **Discover**: real arXiv search (public API, Atom XML parsed server-side), plus
   "upload a PDF → find similar papers". Results are re-ranked for relevance and
   biased toward your saved folders, with a short "why recommended" reason.
-- **Organize** — folders/collections. Save whole papers or paste **excerpts** with
+- **Organize**: folders/collections. Save whole papers or paste **excerpts** with
   a note and a source link/citation. Copy APA citations or download a collection
   as BibTeX.
-- **Analyze collections** — synthesize the papers and excerpts in a folder using
+- **Analyze collections**: synthesize the papers and excerpts in a folder using
   titles, authors, categories, and abstracts as grounding. Live AI is enabled by
   `ANTHROPIC_API_KEY`; the zero-key mock path remains usable.
-- **Capture while reading** — import the JSON produced by the sibling
+- **Capture while reading**: import the JSON produced by the sibling
   `gloss/` extension's “Export to rxiver” action. Highlights become excerpts,
   explanations become notes, and source pages remain attached.
-- **Chat windows** — named threads that bookmark papers/ideas/tabs and hold an AI
+- **Chat windows**: named threads that bookmark papers/ideas/tabs and hold an AI
   research-assistant conversation grounded in those bookmarks + an optional linked
   folder.
-- **Portable workspaces** — download a versioned JSON backup containing every
+- **Portable workspaces**: download a versioned JSON backup containing every
   folder, paper, excerpt, bookmark, and chat, then restore it in another browser.
   Restore validates and normalizes the entire file before replacing local data.
 
@@ -49,9 +49,9 @@ With **no keys at all** the app is fully usable:
 
 Copy `.env.example` to `.env` and set what you want:
 
-- `ANTHROPIC_API_KEY` — enables live chat replies via `claude-sonnet-5`. Leave
+- `ANTHROPIC_API_KEY`: enables live chat replies via `claude-sonnet-5`. Leave
   unset for mock mode.
-- `EMBEDDINGS_PROVIDER` + `EMBEDDINGS_API_KEY` (+ optional `EMBEDDINGS_MODEL`) —
+- `EMBEDDINGS_PROVIDER` + `EMBEDDINGS_API_KEY` (+ optional `EMBEDDINGS_MODEL`), 
   if **both** are set, "find similar" ranks candidates with **semantic
   embeddings** (cosine similarity) from a generic OpenAI-compatible HTTP
   embeddings endpoint (`POST { input: [...] } → { data: [{ embedding: [...] }] }`).
@@ -82,7 +82,7 @@ guidelines. rxiver is not affiliated with or endorsed by arXiv.
 ## Routine corpus refresh ("retrains on arXiv", honestly)
 
 rxiver keeps its corpus fresh by re-fetching the latest papers for your followed
-categories and caching them — **no model training happens**. Configure the
+categories and caching them, **no model training happens**. Configure the
 categories with `REFRESH_CATEGORIES` (default `cs.LG,cs.AI,cs.CL`).
 
 Run it three ways:
@@ -156,13 +156,13 @@ npm start          # NODE_ENV=production, Express serves client/dist + /api on $
 ## Persistence & the Supabase upgrade path
 
 Persistence is **localStorage-first**, but the entire UI talks to a single
-**repository interface** (`client/src/lib/repository.ts`) — it never touches
+**repository interface** (`client/src/lib/repository.ts`). It never touches
 `localStorage` directly. Folders, saved papers, excerpts, chat threads,
 bookmarks, and messages all flow through that interface.
 
 To move to a real backend later, implement the same `Repository` interface
 against **Supabase** (auth + Postgres + Row-Level Security) and swap the exported
-instance — **no UI changes required**:
+instance, **no UI changes required**:
 
 - One Postgres table per entity (`folders`, `saved_papers`, `excerpts`,
   `threads`, `bookmarks`, `messages`), each with a `user_id` column.
@@ -194,5 +194,5 @@ rxiver/
     src/lib/api.ts          typed fetch wrappers for /api
     src/lib/cite.ts         APA and BibTeX citation formatting
     src/components/         Discover, Organize, Chat, PaperCard
-  Dockerfile, .dockerignore, render.yaml, .env.example
+  Dockerfile.dockerignore, render.yaml.env.example
 ```
